@@ -40,7 +40,6 @@ import {
   createCaptureSession,
   initializeSession,
   closeCaptureSession,
-  captureFrame,
   captureFrameToBuffer,
   prepareCaptureSessionForReuse,
   type CaptureOptions,
@@ -101,6 +100,7 @@ import { runCompileStage } from "./render/stages/compileStage.js";
 import { runProbeStage } from "./render/stages/probeStage.js";
 import { runExtractVideosStage } from "./render/stages/extractVideosStage.js";
 import { runAudioStage } from "./render/stages/audioStage.js";
+import { runCaptureStage } from "./render/stages/captureStage.js";
 
 /**
  * Wrap a cleanup operation so it never throws, but logs any failure.
@@ -540,7 +540,7 @@ export class RenderCancelledError extends Error {
   }
 }
 
-function updateJobStatus(
+export function updateJobStatus(
   job: RenderJob,
   status: RenderStatus,
   stage: string,
@@ -1013,7 +1013,7 @@ function createFailedCaptureCalibrationEstimate(reason: string): {
   };
 }
 
-async function executeDiskCaptureWithAdaptiveRetry(options: {
+export async function executeDiskCaptureWithAdaptiveRetry(options: {
   serverUrl: string;
   workDir: string;
   framesDir: string;
@@ -3243,97 +3243,27 @@ export async function executeRenderJob(
           perfStages.encodeMs = encodeResult.durationMs; // Overlapped with capture
         } else {
           // ── Disk-based capture (original flow) ────────────────────────────
-          if (workerCount > 1) {
-            // Parallel capture
-            const attempts = await executeDiskCaptureWithAdaptiveRetry({
-              serverUrl: fileServer.url,
-              workDir,
-              framesDir,
-              totalFrames: job.totalFrames,
-              initialWorkerCount: workerCount,
-              allowRetry: job.config.workers === undefined,
-              frameExt: needsAlpha ? "png" : "jpg",
-              captureOptions: buildCaptureOptions(),
-              createBeforeCaptureHook: createRenderVideoFrameInjector,
-              abortSignal,
-              onProgress: (progress) => {
-                job.framesRendered = progress.capturedFrames;
-                const frameProgress = progress.capturedFrames / progress.totalFrames;
-                const progressPct = 25 + frameProgress * 45;
-
-                if (
-                  progress.capturedFrames % 30 === 0 ||
-                  progress.capturedFrames === progress.totalFrames
-                ) {
-                  updateJobStatus(
-                    job,
-                    "rendering",
-                    `Capturing frame ${progress.capturedFrames}/${progress.totalFrames} (${progress.activeWorkers} workers)`,
-                    Math.round(progressPct),
-                    onProgress,
-                  );
-                }
-              },
-              cfg,
-              log,
-            });
-            captureAttempts.push(...attempts);
-            const lastAttempt = attempts[attempts.length - 1];
-            if (lastAttempt) {
-              workerCount = lastAttempt.workers;
-            }
-            if (probeSession) {
-              lastBrowserConsole = probeSession.browserConsoleBuffer;
-              await closeCaptureSession(probeSession);
-              probeSession = null;
-            }
-          } else {
-            // Sequential capture
-
-            const videoInjector = createRenderVideoFrameInjector();
-            const session =
-              probeSession ??
-              (await createCaptureSession(
-                fileServer.url,
-                framesDir,
-                buildCaptureOptions(),
-                videoInjector,
-                cfg,
-              ));
-            if (probeSession) {
-              prepareCaptureSessionForReuse(session, framesDir, videoInjector);
-              probeSession = null;
-            }
-
-            try {
-              if (!session.isInitialized) {
-                await initializeSession(session);
-              }
-              assertNotAborted();
-              lastBrowserConsole = session.browserConsoleBuffer;
-
-              for (let i = 0; i < job.totalFrames; i++) {
-                assertNotAborted();
-                const time = (i * job.config.fps.den) / job.config.fps.num;
-                await captureFrame(session, i, time);
-                job.framesRendered = i + 1;
-
-                const frameProgress = (i + 1) / job.totalFrames;
-                const progress = 25 + frameProgress * 45;
-
-                updateJobStatus(
-                  job,
-                  "rendering",
-                  `Capturing frame ${i + 1}/${job.totalFrames}`,
-                  Math.round(progress),
-                  onProgress,
-                );
-              }
-            } finally {
-              lastBrowserConsole = session.browserConsoleBuffer;
-              await closeCaptureSession(session);
-            }
-          }
+          const captureRes = await runCaptureStage({
+            fileServer,
+            workDir,
+            framesDir,
+            job,
+            totalFrames,
+            cfg,
+            log,
+            workerCount,
+            probeSession,
+            needsAlpha,
+            captureAttempts,
+            buildCaptureOptions,
+            createRenderVideoFrameInjector,
+            abortSignal,
+            assertNotAborted,
+            onProgress,
+          });
+          workerCount = captureRes.workerCount;
+          probeSession = captureRes.probeSession;
+          lastBrowserConsole = captureRes.lastBrowserConsole;
 
           perfStages.captureMs = Date.now() - stage4Start;
 
