@@ -48,7 +48,7 @@ function isEnabled(): boolean {
 
 function getSessionProperties(): EventProperties {
   return {
-    studio_version: __STUDIO_VERSION__,
+    studio_version: typeof __STUDIO_VERSION__ !== "undefined" ? __STUDIO_VERSION__ : "dev",
     screen_width: window.screen?.width,
     screen_height: window.screen?.height,
     viewport_width: window.innerWidth,
