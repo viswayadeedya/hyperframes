@@ -153,8 +153,12 @@ body {
 }
 
 @keyframes hf-thumb-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .hf-loader-progress__fill {
