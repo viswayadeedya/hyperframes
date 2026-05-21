@@ -113,6 +113,8 @@ export const BlocksTab = memo(function BlocksTab({ onAddBlock, onPreviewBlock }:
                   key={block.name}
                   name={block.name}
                   title={block.title}
+                  description={block.description}
+                  blockType={block.type}
                   duration={dur}
                   category={block.category}
                   tags={block.tags}
@@ -160,9 +162,47 @@ function CategoryPill({
   );
 }
 
+function buildAgentPrompt(
+  title: string,
+  name: string,
+  description: string,
+  category: BlockCategory,
+  blockType: string,
+): string {
+  const isComponent = blockType === "hyperframes:component";
+  const kind = isComponent ? "component" : "block";
+
+  const categoryHints: Record<string, string> = {
+    captions:
+      "This is a caption style. Add it to the composition, then customize the transcript text, fonts, colors, and timing to match the voiceover or audio.",
+    vfx: "This is a VFX effect. Add it as an overlay and adjust shader parameters, colors, and intensity to match the scene.",
+    transitions:
+      "This is a transition. Place it between two scenes on the timeline and adjust the duration and direction.",
+    effects:
+      "This is a visual effect overlay. Layer it on top of existing content and tweak colors, opacity, and animation timing.",
+    social:
+      "This is a social media template. Customize the text, handle, avatar, and metrics to match the content.",
+    data: "This is a data visualization. Update the data values, labels, colors, and animation stagger to tell the right story.",
+    scenes:
+      "This is a full scene. Customize the text, images, layout, and animation timing to fit the narrative.",
+  };
+
+  const hint = categoryHints[category] ?? `Customize this ${kind} to fit the composition.`;
+
+  return [
+    `Add the "${title}" ${kind} (registry: ${name}) to my composition using /hyperframes.`,
+    "",
+    `${description}`,
+    "",
+    hint,
+  ].join("\n");
+}
+
 function BlockCard({
   name,
   title,
+  description,
+  blockType,
   duration,
   category,
   tags,
@@ -174,6 +214,8 @@ function BlockCard({
 }: {
   name: string;
   title: string;
+  description: string;
+  blockType: string;
   duration?: number;
   category: BlockCategory;
   tags?: string[];
@@ -185,6 +227,7 @@ function BlockCard({
 }) {
   const [hovered, setHovered] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [copied, setCopied] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const colors = getCategoryColors(category);
   const needsWebGL = tags?.includes("html-in-canvas") || tags?.includes("webgl");
@@ -220,6 +263,17 @@ function BlockCard({
       setTimeout(() => setAdding(false), 1000);
     },
     [onAdd, adding],
+  );
+
+  const handleCopyPrompt = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const prompt = buildAgentPrompt(title, name, description, category, blockType);
+      navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    },
+    [title, name, description, category, blockType],
   );
 
   const handleDragStart = useCallback(
@@ -267,14 +321,44 @@ function BlockCard({
           </div>
         )}
 
-        {/* Add button overlay */}
-        <button
-          type="button"
-          onClick={handleAdd}
-          className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover/card:opacity-100 transition-opacity"
-        >
-          <span className="text-[10px] font-semibold text-white">{adding ? "Added" : "Add"}</span>
-        </button>
+        {/* Action buttons overlay */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/60 opacity-0 group-hover/card:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={handleAdd}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-white text-black text-[10px] font-semibold hover:bg-neutral-200 transition-colors"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            {adding ? "Added" : "Add"}
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyPrompt}
+            className="flex items-center gap-1 px-3 py-1 rounded-md bg-white/15 text-white/90 text-[9px] font-medium hover:bg-white/25 transition-colors"
+          >
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            {copied ? "Copied!" : "Agent prompt"}
+          </button>
+        </div>
 
         {/* Badges */}
         <div className="absolute top-1 right-1 flex items-center gap-0.5 pointer-events-none">
