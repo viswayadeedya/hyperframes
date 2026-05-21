@@ -5,6 +5,9 @@ import {
   getCategoryColors,
   type BlockCategory,
 } from "../../utils/blockCategories";
+import { usePlayerStore } from "../../player";
+import { formatTime } from "../../player/lib/time";
+import { useStudioContext } from "../../contexts/StudioContext";
 export interface BlockPreviewInfo {
   videoUrl?: string;
   posterUrl?: string;
@@ -153,15 +156,59 @@ function CategoryPill({
   );
 }
 
+interface CompositionContext {
+  currentTime: number;
+  activeCompPath: string | null;
+  elements: Array<{
+    id: string;
+    start: number;
+    duration: number;
+    track: number;
+    label?: string;
+    compositionSrc?: string;
+  }>;
+  compositionDimensions?: { width: number; height: number };
+}
+
+function formatCompositionContext(ctx: CompositionContext): string {
+  const lines: string[] = [
+    `Playback time: ${formatTime(ctx.currentTime)}`,
+    `Active composition: ${ctx.activeCompPath || "index.html"}`,
+  ];
+  if (ctx.compositionDimensions) {
+    lines.push(
+      `Dimensions: ${ctx.compositionDimensions.width}x${ctx.compositionDimensions.height}`,
+    );
+  }
+  const visibleNow = ctx.elements.filter(
+    (el) => ctx.currentTime >= el.start && ctx.currentTime < el.start + el.duration,
+  );
+  if (visibleNow.length > 0) {
+    lines.push(
+      "",
+      `Elements visible at ${formatTime(ctx.currentTime)}:`,
+      ...visibleNow.map(
+        (el) =>
+          `- ${el.label || el.id} (track ${el.track}, ${formatTime(el.start)}–${formatTime(el.start + el.duration)}${el.compositionSrc ? `, src: ${el.compositionSrc}` : ""})`,
+      ),
+    );
+  }
+  const maxZ = ctx.elements.length > 0 ? Math.max(...ctx.elements.map((_, i) => i + 1)) : 0;
+  lines.push("", `Highest track index: ${maxZ}`);
+  return lines.join("\n");
+}
+
 function buildAgentPrompt(
   title: string,
   name: string,
   description: string,
   category: BlockCategory,
   blockType: string,
+  context: CompositionContext,
 ): string {
   const isComponent = blockType === "hyperframes:component";
   const kind = isComponent ? "component" : "block";
+  const compositionInfo = formatCompositionContext(context);
 
   const categoryPrompts: Record<string, string> = {
     captions: [
@@ -201,14 +248,15 @@ function buildAgentPrompt(
     ].join("\n\n"),
   };
 
-  return (
+  const instruction =
     categoryPrompts[category] ??
     [
       `Using /hyperframes, add the "${title}" ${kind} (registry: ${name}) to my composition.`,
       `${description}`,
       `Customize it to match my composition's design and timeline.`,
-    ].join("\n\n")
-  );
+    ].join("\n\n");
+
+  return [instruction, "", "## Current composition state", "", compositionInfo].join("\n");
 }
 
 function BlockCard({
@@ -262,15 +310,31 @@ function BlockCard({
     };
   }, []);
 
+  const { activeCompPath, compositionDimensions } = useStudioContext();
+
   const handleCopyPrompt = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      const prompt = buildAgentPrompt(title, name, description, category, blockType);
+      const state = usePlayerStore.getState();
+      const context: CompositionContext = {
+        currentTime: state.currentTime,
+        activeCompPath,
+        elements: state.elements.map((el) => ({
+          id: el.id,
+          start: el.start,
+          duration: el.duration,
+          track: el.track,
+          label: el.label,
+          compositionSrc: el.compositionSrc,
+        })),
+        compositionDimensions: compositionDimensions ?? undefined,
+      };
+      const prompt = buildAgentPrompt(title, name, description, category, blockType, context);
       navigator.clipboard.writeText(prompt);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     },
-    [title, name, description, category, blockType],
+    [title, name, description, category, blockType, activeCompPath, compositionDimensions],
   );
 
   return (
