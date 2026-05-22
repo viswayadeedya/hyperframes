@@ -1,4 +1,5 @@
 import { memo, useState, useCallback, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useBlockCatalog } from "../../hooks/useBlockCatalog";
 import {
   BLOCK_CATEGORIES,
@@ -23,6 +24,7 @@ interface BlocksTabProps {
 export const BlocksTab = memo(function BlocksTab({ onAddBlock, onPreviewBlock }: BlocksTabProps) {
   const { loading, error, search, setSearch, category, setCategory, filteredBlocks } =
     useBlockCatalog();
+  const [promptModal, setPromptModal] = useState<{ title: string; prompt: string } | null>(null);
 
   if (loading) {
     return (
@@ -118,6 +120,7 @@ export const BlocksTab = memo(function BlocksTab({ onAddBlock, onPreviewBlock }:
                   posterUrl={block.preview?.poster}
                   videoUrl={block.preview?.video}
                   onPreview={onPreviewBlock}
+                  onShowPrompt={setPromptModal}
                   onAdd={
                     block.category === "vfx" ||
                     block.category === "social" ||
@@ -131,6 +134,15 @@ export const BlocksTab = memo(function BlocksTab({ onAddBlock, onPreviewBlock }:
           </div>
         )}
       </div>
+      {promptModal &&
+        createPortal(
+          <PromptPreviewModal
+            title={promptModal.title}
+            prompt={promptModal.prompt}
+            onClose={() => setPromptModal(null)}
+          />,
+          document.body,
+        )}
     </div>
   );
 });
@@ -290,11 +302,11 @@ function BlockCard({
   posterUrl?: string;
   videoUrl?: string;
   onAdd?: () => void;
+  onShowPrompt?: (info: { title: string; prompt: string }) => void;
   onPreview?: (preview: BlockPreviewInfo | null) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [copied, setCopied] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const colors = getCategoryColors(category);
   const needsWebGL = tags?.includes("html-in-canvas") || tags?.includes("webgl");
@@ -334,7 +346,7 @@ function BlockCard({
 
   const { activeCompPath, compositionDimensions } = useStudioContext();
 
-  const handleCopyPrompt = useCallback(
+  const handleShowPrompt = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
       const state = usePlayerStore.getState();
@@ -352,9 +364,7 @@ function BlockCard({
         compositionDimensions: compositionDimensions ?? undefined,
       };
       const prompt = buildAgentPrompt(title, name, description, category, blockType, context);
-      navigator.clipboard.writeText(prompt);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      onShowPrompt?.({ title, prompt });
     },
     [title, name, description, category, blockType, activeCompPath, compositionDimensions],
   );
@@ -418,46 +428,26 @@ function BlockCard({
           )}
           <button
             type="button"
-            onClick={handleCopyPrompt}
-            title="Copy a prompt to paste into your AI agent"
+            onClick={handleShowPrompt}
+            title="Generate a prompt to paste into your AI agent"
             className={`flex items-center gap-1.5 px-3 ${onAdd ? "py-1" : "py-1.5"} rounded-md transition-colors ${
-              copied
-                ? "bg-emerald-500 text-white"
-                : onAdd
-                  ? "bg-white/15 text-white/90 hover:bg-white/25"
-                  : "bg-white text-black hover:bg-neutral-200"
-            } ${onAdd ? "text-[9px]" : "text-[10px] font-semibold"}`}
+              onAdd
+                ? "bg-white/15 text-white/90 hover:bg-white/25 text-[9px]"
+                : "bg-white text-black hover:bg-neutral-200 text-[10px] font-semibold"
+            }`}
           >
-            {copied ? (
-              <>
-                <svg
-                  width={onAdd ? 9 : 11}
-                  height={onAdd ? 9 : 11}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                >
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-                Copied!
-              </>
-            ) : (
-              <>
-                <svg
-                  width={onAdd ? 9 : 11}
-                  height={onAdd ? 9 : 11}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <rect x="9" y="9" width="13" height="13" rx="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-                Ask agent
-              </>
-            )}
+            <svg
+              width={onAdd ? 9 : 11}
+              height={onAdd ? 9 : 11}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            Ask agent
           </button>
         </div>
 
@@ -486,6 +476,81 @@ function BlockCard({
           <span className={`text-[8px] ${colors.text}`}>
             {BLOCK_CATEGORIES.find((c) => c.id === category)?.label}
           </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PromptPreviewModal({
+  title,
+  prompt,
+  onClose,
+}: {
+  title: string;
+  prompt: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(prompt);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [prompt]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-[520px] max-h-[80vh] flex flex-col rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800/60">
+          <div>
+            <h3 className="text-sm font-medium text-neutral-200">Ask agent</h3>
+            <p className="text-xs text-neutral-500 mt-0.5">{title}</p>
+          </div>
+          <button
+            className="p-1 rounded-md text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/50"
+            onClick={onClose}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <p className="text-[11px] text-neutral-500 mb-2">
+            Copy this prompt and paste it into your AI agent (Claude Code, Cursor, etc.)
+          </p>
+          <pre className="text-[11px] text-neutral-300 leading-relaxed whitespace-pre-wrap font-mono bg-neutral-900/60 rounded-lg p-3 border border-neutral-800 select-all">
+            {prompt}
+          </pre>
+        </div>
+        <div className="flex items-center justify-between px-5 py-3 border-t border-neutral-800/60">
+          <span className="text-[11px] text-neutral-600">Paste into your agent after copying</span>
+          <button
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              copied
+                ? "bg-emerald-500 text-white"
+                : "bg-studio-accent/90 text-neutral-950 hover:bg-studio-accent"
+            }`}
+            onClick={handleCopy}
+          >
+            {copied ? "Copied!" : "Copy prompt"}
+          </button>
         </div>
       </div>
     </div>
