@@ -399,13 +399,23 @@ async function checkSfxTimestampConsistency() {
     };
   }
 
+  // Collect ALL audio tags per file (multi-timestamp SFX like click.mp3 have
+  // 3 tags). Use a two-step extraction so we don't depend on src= and
+  // data-start= attribute ordering — the documented canonical pattern in
+  // capabilities.md puts src= LAST in the tag, which an order-dependent
+  // regex would miss → false MISSING reports.
   const indexSfx = new Map();
-  const audioRegex =
-    /<audio[^>]*src=["'](?:[^"']*\/)?sfx\/([\w-]+\.mp3)["'][^>]*?data-start=["']([0-9.]+)["']/g;
-  let m;
-  while ((m = audioRegex.exec(index)) !== null) {
-    if (!indexSfx.has(m[1])) indexSfx.set(m[1], []);
-    indexSfx.get(m[1]).push(parseFloat(m[2]));
+  const audioTagRegex = /<audio[^>]*?>/g;
+  let tagMatch;
+  while ((tagMatch = audioTagRegex.exec(index)) !== null) {
+    const tag = tagMatch[0];
+    const srcMatch = tag.match(/src=["'](?:[^"']*\/)?sfx\/([\w-]+\.mp3)["']/);
+    const dsMatch = tag.match(/data-start=["']([0-9.]+)["']/);
+    if (!srcMatch || !dsMatch) continue;
+    const file = srcMatch[1];
+    const t = parseFloat(dsMatch[1]);
+    if (!indexSfx.has(file)) indexSfx.set(file, []);
+    indexSfx.get(file).push(t);
   }
 
   const drifts = [];
@@ -593,9 +603,16 @@ async function checkMp4Exists() {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Cached so multiple checks don't re-read the same files. The script is a
+// one-shot CLI so a process-scoped cache is fine; no invalidation needed.
+let _compositionsCache = null;
 async function readBeatCompositions() {
+  if (_compositionsCache) return _compositionsCache;
   const dir = join(PROJECT_DIR, "compositions");
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) {
+    _compositionsCache = [];
+    return _compositionsCache;
+  }
   const files = await readdir(dir);
   const beats = files.filter((f) => /^beat-/i.test(f) && f.endsWith(".html"));
   const out = [];
@@ -603,6 +620,7 @@ async function readBeatCompositions() {
     const content = await readFile(join(dir, f), "utf-8");
     out.push({ name: f, content });
   }
+  _compositionsCache = out;
   return out;
 }
 
@@ -653,9 +671,15 @@ function extractTopLevelPositionArgs(content) {
 }
 
 // Returns a map of { "beat-1-name": durationInSeconds, ... } from index.html.
+// Cached per-process (one-shot CLI, no invalidation needed).
+let _beatDurationsCache = null;
 async function readBeatDurationsFromIndex() {
+  if (_beatDurationsCache) return _beatDurationsCache;
   const indexPath = join(PROJECT_DIR, "index.html");
-  if (!existsSync(indexPath)) return {};
+  if (!existsSync(indexPath)) {
+    _beatDurationsCache = {};
+    return _beatDurationsCache;
+  }
   const content = await readFile(indexPath, "utf-8");
   const map = {};
 
@@ -673,6 +697,7 @@ async function readBeatDurationsFromIndex() {
     if (idMatch) map[idMatch[1]] = dur;
     if (srcMatch) map[srcMatch[1]] = dur;
   }
+  _beatDurationsCache = map;
   return map;
 }
 
